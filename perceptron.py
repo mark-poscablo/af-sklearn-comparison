@@ -60,6 +60,11 @@ class AfPerceptron:
         return classes
 
 
+    def init_weights(self, X, Y):
+        # Initialize parameters to 0
+        self.__weights = af.constant(0, X.dims()[1], Y.dims()[1])
+
+
     def train(self, X, Y):
         # Initialize parameters to 0
         self.__weights = af.constant(0, X.dims()[1], Y.dims()[1])
@@ -108,6 +113,9 @@ def arrayfire_perceptron_demo(dataset, num_classes=None):
     print('arrayfire perceptron classifier implementation')
 
     clf = AfPerceptron(alpha=0.1, maxerr=0.01, maxiter=1000, verbose=False)
+    # Initial run to avoid overhead in training
+    clf.train(train_feats, train_targets)
+    clf.init_weights(train_feats, train_targets)
 
     # Benchmark training
     t0 = time.time()
@@ -145,7 +153,7 @@ def sklearn_perceptron_demo(dataset):
     X_test = dataset[2]
     y_test = dataset[3]
 
-    clf = Perceptron(alpha=0.1, tol=0.01, max_iter=1000, random_state=0, verbose=0)
+    clf = Perceptron(alpha=0.1, tol=0.01, max_iter=1000, random_state=0, verbose=0, n_jobs=-1)
 
     print('sklearn perceptron classifier implementation')
     t0 = time.time()
