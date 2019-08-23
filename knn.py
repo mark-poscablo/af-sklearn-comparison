@@ -43,6 +43,14 @@ def abserr(predicted, target):
     return 100 * af.sum(af.abs(predicted - target)) / predicted.elements()
 
 
+def get_dims(arr):
+    dims = [arr.dims()[0], 1, 1, 1]
+    dims[1] = arr.dims()[1] if arr.numdims() > 1 else 1
+    dims[2] = arr.dims()[2] if arr.numdims() > 2 else 1
+    dims[3] = arr.dims()[3] if arr.numdims() > 3 else 1
+    return tuple(dims)
+
+
 class AfKNearestNeighbors:
     def __init__(self, dim=1, weight_by_dist=False, num_nearest=5, match_type=af.MATCH.SSD, verbose=False):
         self._dim = dim
@@ -53,32 +61,66 @@ class AfKNearestNeighbors:
 
         self._data = None
         self._labels = None
+        self._num_classes = None
 
 
-    def train(self, X, Y):
+    def train(self, X, Y, num_classes=None):
         # "fit" data
         self._data = X
         self._labels = Y
+        if num_classes == None:
+            self._num_classes = int(af.max(Y) + 1)
+        else:
+            self._num_classes = int(num_classes)
 
 
     def predict(self, X):
         near_locs, near_dists = af.vision.nearest_neighbour(X, self._data, self._dim, \
                                                             self._num_nearest, self._match_type)
 
+        weights = None
         if self._weight_by_dist:
-            weights = 1./near_dists
+            inv_dists = 1./near_dists
+            sum_inv_dists = af.sum(inv_dists)
+            weights = inv_dists / sum_inv_dists
         else:
             weights = af.Array.copy(near_dists)
             weights[:] = 1
 
         top_labels = af.moddims(self._labels[near_locs], \
-                                near_locs.dims()[0], near_locs.dims()[1])
+                                get_dims(near_locs)[0], get_dims(near_locs)[1])
         weighted_votes = af.scan_by_key(top_labels, weights) # reduce by key would be more ideal
         _, max_vote_locs = af.imax(weighted_votes, dim=0)
-        pred_idxs = af.range(weighted_votes.dims()[1]) * weighted_votes.dims()[0] + max_vote_locs.T
+        pred_idxs = af.range(get_dims(weighted_votes)[1]) * get_dims(weighted_votes)[0] + max_vote_locs.T
         top_labels_flat = af.flat(top_labels)
         pred_classes = top_labels_flat[pred_idxs]
         return pred_classes
+
+    def predict_proba(self, X):
+        near_locs, near_dists = af.vision.nearest_neighbour(X, self._data, self._dim, \
+                                                            self._num_nearest, self._match_type)
+
+        weights = None
+        if self._weight_by_dist:
+            inv_dists = 1./near_dists
+            sum_inv_dists = af.sum(inv_dists)
+            weights = inv_dists / sum_inv_dists
+        else:
+            weights = af.Array.copy(near_dists)
+            weights[:] = 1./self._num_nearest
+
+        top_labels = af.moddims(self._labels[near_locs], \
+                                get_dims(near_locs)[0], get_dims(near_locs)[1])
+
+        probs = af.constant(0, X.dims()[0], self._num_classes)
+        for query_idx in range(X.dims()[0]):
+            query_weights = weights[:, query_idx]
+            query_top_labels = top_labels[:, query_idx]
+            for class_idx in range(self._num_classes):
+                class_weights = query_weights[af.where(query_top_labels == class_idx)]
+                probs[query_idx, class_idx] = af.sum(class_weights)
+
+        return probs
 
 
 def arrayfire_knn_demo(dataset, num_classes=None):
@@ -98,7 +140,7 @@ def arrayfire_knn_demo(dataset, num_classes=None):
 
     print('arrayfire knn classifier implementation')
 
-    clf = AfKNearestNeighbors()
+    clf = AfKNearestNeighbors(weight_by_dist=True)
 
     # Benchmark training
     t0 = time.time()
@@ -108,7 +150,7 @@ def arrayfire_knn_demo(dataset, num_classes=None):
     print('Training time: {0:4.4f} s'.format(dt_train))
 
     # Benchmark prediction
-    iters = 20
+    iters = 5
     test_outputs = None
     t0 = time.time()
     for i in range(iters):
@@ -205,5 +247,20 @@ def main():
         return -1
 
 
+def main2():
+    data = af.Array([0, 1, 2, 2.5, 8, 9, 20, 21, 22])
+    labels = af.Array([0, 0, 0, 0, 1, 1, 2, 2, 2]).as_type(af.Dtype.u32)
+    num_labels = 2
+    # query = af.Array([1.5])
+    query = af.Array([1.5, 12])
+    clf = AfKNearestNeighbors(num_nearest=5, weight_by_dist=False)
+    # clf = AfKNearestNeighbors(num_nearest=data.dims()[0], weight_by_dist=True)
+    clf.train(data, labels)
+    outputs = clf.predict(query)
+    outputs_proba = clf.predict_proba(query)
+    print('outputs:', outputs)
+    print('outputs_proba:', outputs_proba)
+
+
 if __name__ == '__main__':
-    main()
+    main2()
