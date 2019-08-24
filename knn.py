@@ -74,41 +74,47 @@ class AfKNearestNeighbors:
             self._num_classes = int(num_classes)
 
 
-    def predict(self, X):
-        near_locs, near_dists = af.vision.nearest_neighbour(X, self._data, self._dim, \
-                                                            self._num_nearest, self._match_type)
-
+    def _get_neighbor_weights(self, dists):
         weights = None
         if self._weight_by_dist:
-            inv_dists = 1./near_dists
+            inv_dists = 1./dists
             sum_inv_dists = af.sum(inv_dists)
             weights = inv_dists / sum_inv_dists
         else:
-            weights = af.Array.copy(near_dists)
-            weights[:] = 1
+            weights = af.Array.copy(dists)
+            weights[:] = 1/self._num_nearest
+        return weights
 
+
+    def predict(self, X):
+        near_locs, near_dists = af.vision.nearest_neighbour(X, self._data, self._dim, \
+                                                            self._num_nearest, self._match_type)
+        weights = self._get_neighbor_weights(near_dists)
         top_labels = af.moddims(self._labels[near_locs], \
                                 get_dims(near_locs)[0], get_dims(near_locs)[1])
-        weighted_votes = af.scan_by_key(top_labels, weights) # reduce by key would be more ideal
-        _, max_vote_locs = af.imax(weighted_votes, dim=0)
-        pred_idxs = af.range(get_dims(weighted_votes)[1]) * get_dims(weighted_votes)[0] + max_vote_locs.T
+        accum_weights = af.scan_by_key(top_labels, weights) # reduce by key would be more ideal
+        _, max_weight_locs = af.imax(accum_weights, dim=0)
+        pred_idxs = af.range(get_dims(accum_weights)[1]) * get_dims(accum_weights)[0] + max_weight_locs.T
         top_labels_flat = af.flat(top_labels)
         pred_classes = top_labels_flat[pred_idxs]
         return pred_classes
 
-    def predict_proba(self, X):
+
+    def predict_proba1(self, X):
         near_locs, near_dists = af.vision.nearest_neighbour(X, self._data, self._dim, \
                                                             self._num_nearest, self._match_type)
+        weights = self._get_neighbor_weights(near_dists)
+        top_labels = af.moddims(self._labels[near_locs], \
+                                get_dims(near_locs)[0], get_dims(near_locs)[1])
+        accum_weights = af.scan_by_key(top_labels, weights) # reduce by key would be more ideal
+        probs, _ = af.imax(accum_weights, dim=0)
+        return probs.T
 
-        weights = None
-        if self._weight_by_dist:
-            inv_dists = 1./near_dists
-            sum_inv_dists = af.sum(inv_dists)
-            weights = inv_dists / sum_inv_dists
-        else:
-            weights = af.Array.copy(near_dists)
-            weights[:] = 1./self._num_nearest
 
+    def predict_proba2(self, X):
+        near_locs, near_dists = af.vision.nearest_neighbour(X, self._data, self._dim, \
+                                                            self._num_nearest, self._match_type)
+        weights = self._get_neighbor_weights(near_dists)
         top_labels = af.moddims(self._labels[near_locs], \
                                 get_dims(near_locs)[0], get_dims(near_locs)[1])
 
@@ -260,7 +266,8 @@ def main2():
     outputs_proba = clf.predict_proba(query)
     print('outputs:', outputs)
     print('outputs_proba:', outputs_proba)
+    print('ndarray version:\n', outputs_proba.to_ndarray())
 
 
 if __name__ == '__main__':
-    main2()
+    main()
